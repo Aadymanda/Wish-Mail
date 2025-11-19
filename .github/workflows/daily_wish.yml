@@ -1,0 +1,38 @@
+name: Daily Wish Mailer
+
+# 1. Define the event trigger: Run daily on a schedule
+on:
+  schedule:
+    # Runs every day at 03:30 UTC (which is 9:00 AM IST)
+    # You can change this time if needed, but it MUST be in UTC.
+    - cron: '50 9 * * *' 
+
+jobs:
+  send_wish_mail:
+    runs-on: ubuntu-latest # Uses a standard Ubuntu runner
+
+    # 2. Map GitHub Secrets to Environment Variables
+    # These names MUST match the names you defined in your Secrets settings.
+    env:
+      PG_CONN_STRING: ${{ secrets.PG_CONN_STRING }}
+      EMAIL_USER: ${{ secrets.EMAIL_USER }}
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+
+      # SMTP_SERVER and SMTP_PORT are not needed here as your Python script uses defaults.
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4 # Downloads the code from your repo
+
+      - name: Set up Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x' # Uses the latest version of Python 3
+
+      - name: Install Python Dependencies
+        # Installs packages listed in your requirements.txt
+        run: pip install -r requirements.txt
+
+      - name: Execute Wish Mail Program
+        # Runs your main application script
+        run: python app.py
