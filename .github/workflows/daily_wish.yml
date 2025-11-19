@@ -6,6 +6,7 @@ on:
     # Runs every day at 03:30 UTC (which is 9:00 AM IST)
     # You can change this time if needed, but it MUST be in UTC.
     - cron: '50 9 * * *' 
+  workflow_dispatch:  
 
 jobs:
   send_wish_mail:
