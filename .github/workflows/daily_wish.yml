@@ -1,39 +1,45 @@
 name: Daily Wish Mailer
 
-# 1. Define the event trigger: Run daily on a schedule
 on:
   schedule:
-    # Runs every day at 03:30 UTC (which is 9:00 AM IST)
-    # You can change this time if needed, but it MUST be in UTC.
-    - cron: '50 9 * * *' 
-  workflow_dispatch:  
+    # Runs every day at 09:50 UTC (15:20 IST)
+    - cron: '50 9 * * *'
+  workflow_dispatch:
 
 jobs:
   send_wish_mail:
-    runs-on: ubuntu-latest # Uses a standard Ubuntu runner
+    runs-on: ubuntu-latest
 
-    # 2. Map GitHub Secrets to Environment Variables
-    # These names MUST match the names you defined in your Secrets settings.
+    # 1. Map GitHub Secrets to Environment Variables (REQUIRED)
     env:
       PG_CONN_STRING: ${{ secrets.PG_CONN_STRING }}
       EMAIL_USER: ${{ secrets.EMAIL_USER }}
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-
-      # SMTP_SERVER and SMTP_PORT are not needed here as your Python script uses defaults.
-
+      
     steps:
       - name: Checkout repository code
-        uses: actions/checkout@v4 # Downloads the code from your repo
+        uses: actions/checkout@v4
 
       - name: Set up Python Environment
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x' # Uses the latest version of Python 3
+          python-version: '3.x'
 
       - name: Install Python Dependencies
-        # Installs packages listed in your requirements.txt
+        # Ensures 'python-dotenv' is installed via requirements.txt
         run: pip install -r requirements.txt
-
+        
+      # 2. The Secure Creation Step: Creates the .env file
+      - name: Create .env file from Secrets
+        # The | means the following lines are a multi-line shell command.
+        # Note the indentation of the echo commands.
+        run: |
+          echo "PG_CONN_STRING=$PG_CONN_STRING" >> .env
+          echo "EMAIL_USER=$EMAIL_USER" >> .env
+          echo "EMAIL_PASSWORD=$EMAIL_PASSWORD" >> .env
+          echo "SMTP_SERVER=smtp.office365.com" >> .env
+          echo "SMTP_PORT=587" >> .env
+      
       - name: Execute Wish Mail Program
-        # Runs your main application script
+        # Your app.py must have the 'load_dotenv()' call at the top.
         run: python app.py
