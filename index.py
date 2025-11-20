@@ -1,11 +1,8 @@
 import streamlit as st
 import psycopg2
 from psycopg2 import sql
-from psycopg2 import extras
 from datetime import date
-import uuid
-import pandas as pd
-import io
+import uuid # For generating unique IDs in the mock database
 
 # --- Configuration and Initial State ---
 st.set_page_config(
@@ -23,6 +20,7 @@ if 'db_conn' not in st.session_state:
 if 'use_mock_db' not in st.session_state:
     st.session_state.use_mock_db = True
 if 'mock_employees' not in st.session_state:
+    # Initialize mock data for temporary testing
     st.session_state.mock_employees = [
         {"id": str(uuid.uuid4()), "name": "Alice Johnson (Mock)", "email": "alice@mock.com", "birthday": date(1990, 1, 1), "last_wished_year": 1900},
         {"id": str(uuid.uuid4()), "name": "Bob Lee (Mock)", "email": "bob@mock.com", "birthday": date(1985, 12, 25), "last_wished_year": 1900}
@@ -34,7 +32,7 @@ if 'mock_employees' not in st.session_state:
 def establish_db_connection(db_url):
     """Attempts to establish and cache the PostgreSQL connection."""
     try:
-        # Clean the URL if the user accidentally pastes the problematic parameter
+        # Clean the URL by removing the problematic channel_binding parameter
         cleaned_url = db_url.replace("&channel_binding=require", "")
         conn = psycopg2.connect(cleaned_url)
         conn.autocommit = False 
@@ -43,27 +41,30 @@ def establish_db_connection(db_url):
         return None
 
 def init_real_db(connection):
-    """Ensures the employees table exists with the required schema."""
+    """
+    Ensures the employees table exists with the required schema.
+    NOTE: This only runs the CREATE TABLE query, not an INSERT/UPDATE query.
+    """
     cursor = connection.cursor()
     try:
-        upsert_query = sql.SQL("""
-                INSERT INTO {} (name, email, birthday) 
-                VALUES (%s, %s, %s)  # <--- CRUCIAL: Must have three %s placeholders
-                ON CONFLICT (email) DO UPDATE 
-                SET name = EXCLUDED.name, 
-                    birthday = EXCLUDED.birthday;
-            """).format(sql.Identifier(TABLE_NAME))
-            
-            # Use execute_batch for performance
-            extras.execute_batch(cursor, upsert_query, data_to_upload)
-            conn.commit()
+        create_table_query = sql.SQL("""
+            CREATE TABLE IF NOT EXISTS {} (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                birthday DATE NOT NULL,
+                last_wished_year INT DEFAULT 1900
+            );
+        """).format(sql.Identifier(TABLE_NAME))
+        cursor.execute(create_table_query)
+        connection.commit()
     except Exception as e:
         st.error(f"Database initialization failed: {e}")
         connection.rollback()
     finally:
         cursor.close()
 
-# --- NEW: Check for Secrets on Startup ---
+# --- NEW: Check for Secrets on Startup (Simplified) ---
 
 # Check if secrets are available and attempt connection automatically
 if st.session_state.use_mock_db and 'database' in st.secrets and 'url' in st.secrets.database:
@@ -74,7 +75,6 @@ if st.session_state.use_mock_db and 'database' in st.secrets and 'url' in st.sec
         init_real_db(conn_attempt)
         st.session_state.db_conn = conn_attempt
         st.session_state.use_mock_db = False
-        # Do not st.rerun here, let the script finish initializing
     else:
         st.sidebar.error("Attempted connection via secrets.toml but failed. Check URL.")
 
@@ -106,7 +106,6 @@ def connection_ui():
                 return
 
             with st.spinner("Attempting connection..."):
-                # Pass the input URL to the connection attempt
                 conn_attempt = establish_db_connection(db_url_input.strip())
             
             if conn_attempt:
@@ -125,17 +124,21 @@ conn = st.session_state.db_conn
 USE_MOCK_DB = st.session_state.use_mock_db
 
 def add_employee(name, email, birthday):
-    """Adds an employee to the mock list or the real DB."""
+    """Adds or updates an employee to the mock list or the real DB."""
     if USE_MOCK_DB:
-        # Mock DB Logic
-        if any(emp['email'] == email for emp in st.session_state.mock_employees):
-            st.error(f"Error: An employee with email '{email}' already exists in the mock DB.")
-            return False
+        # Mock DB Logic (Upsert)
+        for emp in st.session_state.mock_employees:
+            if emp['email'] == email:
+                emp['name'] = name
+                emp['birthday'] = birthday
+                return True # Updated
+        
+        # Insert New
         new_emp = {"id": str(uuid.uuid4()), "name": name, "email": email, "birthday": birthday, "last_wished_year": 1900}
         st.session_state.mock_employees.append(new_emp)
         return True
     else:
-        # Real DB Logic
+        # Real DB Logic (Single Upsert)
         cursor = conn.cursor()
         try:
             # Upsert logic (Insert OR Update if email exists)
@@ -156,82 +159,8 @@ def add_employee(name, email, birthday):
         finally:
             cursor.close()
 
-def bulk_upload_csv(df):
-    """Inserts or updates multiple employees from a DataFrame."""
-    if df.empty:
-        st.warning("CSV file is empty.")
-        return 0, 0, 0
-
-    required_cols = ['name', 'email', 'birthday']
-    if not all(col in df.columns for col in required_cols):
-        st.error(f"CSV must contain columns: {', '.join(required_cols)}")
-        return 0, 0, 0
-
-    df = df[required_cols].dropna(subset=['email'])
-    
-    # Try to convert birthday column to date objects
-    try:
-        df['birthday'] = pd.to_datetime(df['birthday'], errors='coerce').dt.date
-        df.dropna(subset=['birthday'], inplace=True)
-    except Exception:
-        st.error("Could not parse all dates in the 'birthday' column.")
-        return 0, 0, 0
-
-    data_to_upload = [(row['name'], row['email'], row['birthday']) for index, row in df.iterrows()]
-    
-    if USE_MOCK_DB:
-        # Mock DB Bulk Upsert Logic
-        inserted_count = 0
-        updated_count = 0
-        
-        for name, email, birthday in data_to_upload:
-            is_found = False
-            for emp in st.session_state.mock_employees:
-                if emp['email'] == email:
-                    emp['name'] = name
-                    emp['birthday'] = birthday
-                    updated_count += 1
-                    is_found = True
-                    break
-            if not is_found:
-                new_emp = {"id": str(uuid.uuid4()), "name": name, "email": email, "birthday": birthday, "last_wished_year": 1900}
-                st.session_state.mock_employees.append(new_emp)
-                inserted_count += 1
-        
-        st.success(f"Mock Data Updated: {inserted_count} inserted, {updated_count} updated.")
-        return inserted_count, updated_count, len(df) - inserted_count - updated_count
-    
-    else:
-        # Real DB Bulk Upsert Logic
-        cursor = conn.cursor()
-        
-        try:
-            # Query with ON CONFLICT for upsert
-            upsert_query = sql.SQL("""
-                INSERT INTO {} (name, email, birthday) 
-                VALUES %s
-                ON CONFLICT (email) DO UPDATE 
-                SET name = EXCLUDED.name, 
-                    birthday = EXCLUDED.birthday;
-            """).format(sql.Identifier(TABLE_NAME))
-            
-            # Use execute_batch for performance
-            extras.execute_batch(cursor, upsert_query, data_to_upload)
-            conn.commit()
-            
-            # Simple count (does not distinguish insert/update count easily with execute_batch)
-            st.success(f"Bulk Upload Complete: Successfully processed {len(data_to_upload)} records (Inserted or Updated).")
-            return len(data_to_upload), 0, 0 
-
-        except Exception as e:
-            st.error(f"Bulk upload failed during DB execution: {e}")
-            conn.rollback()
-            return 0, 0, len(data_to_upload)
-        finally:
-            cursor.close()
-
 def get_employee_names():
-    # Implementation remains the same
+    """Fetches all employee names for the finder/selector."""
     if USE_MOCK_DB:
         return sorted([emp['name'] for emp in st.session_state.mock_employees])
     else:
@@ -247,7 +176,7 @@ def get_employee_names():
             cursor.close()
 
 def get_employee_details(name):
-    # Implementation remains the same
+    """Fetches full details for a single employee."""
     if USE_MOCK_DB:
         return next((emp for emp in st.session_state.mock_employees if emp['name'] == name), None)
     else:
@@ -258,7 +187,6 @@ def get_employee_details(name):
             cursor.execute(select_query, (name,))
             result = cursor.fetchone()
             if result:
-                # Ensure the date is returned as a date object if possible
                 return {"name": result[0], "email": result[1], "birthday": result[2], "last_wished_year": result[3]}
             return None
         except Exception as e:
@@ -268,7 +196,7 @@ def get_employee_details(name):
             cursor.close()
 
 def delete_employee(name):
-    # Implementation remains the same
+    """Deletes an employee by name."""
     if USE_MOCK_DB:
         initial_count = len(st.session_state.mock_employees)
         st.session_state.mock_employees = [emp for emp in st.session_state.mock_employees if emp['name'] != name]
@@ -298,67 +226,41 @@ st.markdown("---")
 
 # --- Tabs for CRUD Operations ---
 
-tab_add, tab_find, tab_delete = st.tabs(["➕ Add/Import Employee", "🔍 Find Employee & Details", "🗑️ Delete Employee"])
+tab_add, tab_find, tab_delete = st.tabs(["➕ Add/Update Employee", "🔍 Find Employee & Details", "🗑️ Delete Employee"])
 
-# 1. Add Employee Tab
+# 1. Add Employee Tab (Simplified to manual entry only)
 with tab_add:
-    st.header("New Employee Entry or Bulk Import")
-    
-    add_tab, import_tab = st.tabs(["👤 Add Single Employee", "📁 Bulk Upload (CSV)"])
+    st.header("Add or Update Employee")
+    st.info("Enter an existing email to update the record, or a new email to create a new record.")
 
-    with add_tab:
-        with st.form("add_employee_form", clear_on_submit=True):
-            col_name, col_email = st.columns(2)
-            with col_name:
-                new_name = st.text_input("Full Name", max_chars=255, help="e.g., Emily Clark")
-            with col_email:
-                new_email = st.text_input("Email Address", max_chars=255, help="Must be unique.")
-            
-            new_birthday = st.date_input(
-                "Birthday (Date Picker)",
-                min_value=date(1900, 1, 1),
-                max_value=date.today(),
-                value=date(2000, 1, 1),
-                help="Select the date of birth (YYYY-MM-DD)."
-            )
-
-            submitted = st.form_submit_button("✅ Add Employee (Single)", type="primary")
-
-            if submitted:
-                if new_name and new_email:
-                    with st.spinner(f"Adding/Upserting {new_name}..."):
-                        if add_employee(new_name.strip(), new_email.strip(), new_birthday):
-                            st.success(f"Successfully added/updated {new_name}!")
-                            st.balloons()
-                else:
-                    st.warning("Please fill in the Name and Email fields.")
-
-    with import_tab:
-        st.markdown("Upload a CSV file with the following required columns:")
-        st.code("name, email, birthday")
+    with st.form("add_employee_form", clear_on_submit=True):
+        col_name, col_email = st.columns(2)
+        with col_name:
+            new_name = st.text_input("Full Name", max_chars=255, help="e.g., Emily Clark")
+        with col_email:
+            new_email = st.text_input("Email Address (Unique Key)", max_chars=255, help="Used to identify or update the record.")
         
-        uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
-        
-        if uploaded_file is not None:
-            # Read CSV into a pandas DataFrame
-            try:
-                data = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
-                df = pd.read_csv(data)
-                
-                st.info(f"Loaded {len(df)} rows from CSV. Processing for upload...")
-                
-                if st.button("🚀 Process Bulk Upload/Update"):
-                    with st.spinner("Executing bulk upsert..."):
-                        inserted, updated, skipped = bulk_upload_csv(df)
-                        
-                        if inserted > 0 or updated > 0:
-                            st.success(f"Bulk Operation Complete: {inserted} inserted, {updated} updated, {skipped} skipped.")
-                            st.rerun() # Refresh app to see new data in the Finder tab
+        new_birthday = st.date_input(
+            "Birthday (Date Picker)",
+            min_value=date(1900, 1, 1),
+            max_value=date.today(),
+            value=date(2000, 1, 1),
+            help="Select the date of birth (YYYY-MM-DD)."
+        )
 
-            except Exception as e:
-                st.error(f"Error processing CSV: {e}")
+        submitted = st.form_submit_button("✅ Save Employee Record", type="primary")
 
-# 2. Find Employee Tab (with type-ahead suggestion)
+        if submitted:
+            if new_name and new_email:
+                with st.spinner(f"Saving {new_name}..."):
+                    if add_employee(new_name.strip(), new_email.strip(), new_birthday):
+                        st.success(f"Successfully saved/updated record for {new_name}!")
+                        st.balloons()
+            else:
+                st.warning("Please fill in the Name and Email fields.")
+
+
+# 2. Find Employee Tab (Remains the same)
 with tab_find:
     st.header("Employee Finder")
     st.info("Start typing a name in the box below to instantly filter the list and view details.")
@@ -394,7 +296,7 @@ with tab_find:
         st.warning("No employee records found. Add data using the first tab.")
 
 
-# 3. Delete Employee Tab
+# 3. Delete Employee Tab (Remains the same)
 with tab_delete:
     st.header("Delete Employee Record")
     st.error("⚠️ Warning: Deletion is permanent.")
