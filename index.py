@@ -46,17 +46,17 @@ def init_real_db(connection):
     """Ensures the employees table exists with the required schema."""
     cursor = connection.cursor()
     try:
-        create_table_query = sql.SQL("""
-            CREATE TABLE IF NOT EXISTS {} (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                email VARCHAR(255) NOT NULL UNIQUE,
-                birthday DATE NOT NULL,
-                last_wished_year INT DEFAULT 1900
-            );
-        """).format(sql.Identifier(TABLE_NAME))
-        cursor.execute(create_table_query)
-        connection.commit()
+        upsert_query = sql.SQL("""
+                INSERT INTO {} (name, email, birthday) 
+                VALUES (%s, %s, %s)  # <--- CRUCIAL: Must have three %s placeholders
+                ON CONFLICT (email) DO UPDATE 
+                SET name = EXCLUDED.name, 
+                    birthday = EXCLUDED.birthday;
+            """).format(sql.Identifier(TABLE_NAME))
+            
+            # Use execute_batch for performance
+            extras.execute_batch(cursor, upsert_query, data_to_upload)
+            conn.commit()
     except Exception as e:
         st.error(f"Database initialization failed: {e}")
         connection.rollback()
