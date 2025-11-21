@@ -3,7 +3,7 @@ name: Daily Wish Mailer
 on:
   schedule:
     # Runs every day at 09:50 UTC (15:20 IST)
-    - cron: '31 18 * * *'
+    - cron: '35 4 * * *'
   workflow_dispatch:
 
 jobs:
