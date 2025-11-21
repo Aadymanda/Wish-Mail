@@ -6,6 +6,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from contextlib import contextmanager
+from datetime import datetime
+import time
 
 load_dotenv()
 # This library is required to connect to PostgreSQL (Neon).
@@ -55,11 +57,11 @@ def create_and_send_email(smtp_obj, recipient_name, recipient_email):
         <div style="max-width: 600px; margin: auto; background: #ffffff; padding: 25px; border-radius: 10px; border-left: 5px solid #0078d4; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
           <h1 style="color: #0078d4; text-align: center;">🎉 Happy Birthday, {recipient_name}! 🎉</h1>
           <p style="font-size: 16px; color: #333;">
-            We wish you a wonderful and joyful birthday!
+            wish you a wonderful and joyful birthday!
           </p>
           <p style="font-size: 14px; color: #777; text-align: right; margin-top: 40px;">
             Best Regards,<br>
-            Your Automated Wisher (Sent from: {EMAIL_USER})
+            Your Aadarsh (Sent from: {EMAIL_USER})
           </p>
         </div>
       </body>
@@ -146,6 +148,12 @@ def run_birthday_wisher_demo():
         
     print(f"\n--- DEMO Complete ---")
     print(f"Total successful birthday wishes sent: {wishes_sent_count}")
+    today = datetime.now()
+    current_year = today.year
+    # ...
+    print(f"--- Birthday Wisher DEMO Running ---")
+    print(f"System time at run: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (Assuming UTC)")
+    print(f"SQL Query will look for birthdays on Month: {today.month}, Day: {today.day}")
 
 
 if __name__ == "__main__":
